@@ -1,0 +1,20 @@
+[
+  "apps/api/tests/test_config.py::test_api_prefix_normalization",
+  "apps/api/tests/test_config.py::test_default_settings_valid",
+  "apps/api/tests/test_config.py::test_invalid_database_url_scheme_fails",
+  "apps/api/tests/test_config.py::test_production_fails_with_insecure_secret_key",
+  "apps/api/tests/test_config.py::test_production_fails_with_sqlite",
+  "apps/api/tests/test_config.py::test_production_fails_with_sqlite_and_valid_secret",
+  "apps/api/tests/test_config.py::test_production_succeeds_with_strong_config",
+  "apps/api/tests/test_health.py::test_health_prefixed_endpoint",
+  "apps/api/tests/test_health.py::test_health_root_endpoint",
+  "apps/api/tests/test_health.py::test_ready_endpoint_healthy",
+  "apps/api/tests/test_health.py::test_ready_endpoint_unhealthy_returns_503",
+  "apps/api/tests/test_logging.py::test_redaction_filter_log_record",
+  "apps/api/tests/test_logging.py::test_redaction_filter_scrubs_bearer_tokens",
+  "apps/api/tests/test_logging.py::test_redaction_filter_scrubs_database_passwords",
+  "apps/api/tests/test_logging.py::test_redaction_filter_scrubs_dsn_database_passwords",
+  "apps/api/tests/test_logging.py::test_redaction_filter_scrubs_ssn_pattern",
+  "apps/api/tests/test_logging.py::test_redaction_filter_scrubs_standalone_jwt",
+  "apps/api/tests/test_logging.py::test_redaction_filter_scrubs_tokens_and_secrets"
+]

@@ -1,0 +1,17 @@
+[
+  "tests/test_config.py::test_api_prefix_normalization",
+  "tests/test_config.py::test_default_settings_valid",
+  "tests/test_config.py::test_invalid_database_url_scheme_fails",
+  "tests/test_config.py::test_production_fails_with_insecure_secret_key",
+  "tests/test_config.py::test_production_fails_with_sqlite",
+  "tests/test_config.py::test_production_succeeds_with_strong_config",
+  "tests/test_health.py::test_health_prefixed_endpoint",
+  "tests/test_health.py::test_health_root_endpoint",
+  "tests/test_health.py::test_ready_endpoint_healthy",
+  "tests/test_health.py::test_ready_endpoint_unhealthy_returns_503",
+  "tests/test_logging.py::test_redaction_filter_log_record",
+  "tests/test_logging.py::test_redaction_filter_scrubs_bearer_tokens",
+  "tests/test_logging.py::test_redaction_filter_scrubs_database_passwords",
+  "tests/test_logging.py::test_redaction_filter_scrubs_ssn_pattern",
+  "tests/test_logging.py::test_redaction_filter_scrubs_tokens_and_secrets"
+]
