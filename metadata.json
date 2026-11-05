@@ -1,0 +1,6 @@
+{
+  "name": "ReleaseGate",
+  "description": "Evidence-driven AI data release governance agent and hybrid control plane.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
