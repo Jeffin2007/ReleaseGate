@@ -1,11 +1,14 @@
 """
-Dataset ingestion, profiling, and storage coordination service.
-Orchestrates file validation, cryptographic hashing, deterministic Pandas profiling,
-secure local filesystem persistence, and SQLAlchemy metadata recording.
+Dataset Metadata Coordination Service for the Cloud Control Plane.
+Strictly adheres to the ReleaseGate Hybrid Architecture Baseline v1.0:
+- The Cloud Control Plane receives ONLY sanitized metadata, SHA-256 content hashes,
+  opaque artifact references, and profiling summaries.
+- Raw dataset files, validation, hashing, profiling, and storage execute exclusively
+  inside the Local Data Processing Plane (local-worker).
 """
 
 import uuid
-from typing import List, Optional, Tuple
+from typing import BinaryIO, List, Optional, Tuple, Union
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
@@ -13,13 +16,13 @@ from app.core.logging import get_logger
 from app.db.models.dataset import Dataset, DatasetVersion
 from app.schemas.dataset import (
     DatasetIngestResponse,
+    DatasetMetadataRegistrationRequest,
     DatasetProfileSchema,
     DatasetResponse,
     DatasetVersionResponse,
 )
-from engines.dataset_profiler import DatasetProfiler, ProfilingResult
+from local_worker.ingestion_service import LocalIngestionWorker, SanitizedIngestionPayload
 from local_worker.secure_storage import LocalDatasetStorage
-from local_worker.validator import validate_dataset_upload
 
 logger = get_logger("releasegate.services.dataset")
 
@@ -41,51 +44,36 @@ class DatasetVersionNotFoundError(DatasetServiceError):
 
 class DatasetService:
     """
-    High-level business service for local dataset ingestion.
-    Enforces that raw dataset files remain strictly in local storage
-    and exposes only secure artifact references.
+    Cloud Control Plane Metadata Coordination Service.
+    Persists sanitized dataset metadata, content hashes, and profiling summaries in PostgreSQL.
+    Delegates any local raw file processing strictly to LocalIngestionWorker in the Local Data Plane.
     """
 
     def __init__(self, storage: Optional[LocalDatasetStorage] = None):
-        self.storage = storage or LocalDatasetStorage()
+        self.local_worker = LocalIngestionWorker(storage=storage)
 
-    def ingest_dataset(
+    def register_dataset_metadata(
         self,
-        filename: str,
-        content: bytes,
+        registration: DatasetMetadataRegistrationRequest,
         db: Session,
-        dataset_name: Optional[str] = None,
-        description: Optional[str] = None,
-        dataset_id: Optional[uuid.UUID] = None,
+        require_existing_dataset: bool = False,
         organization_id: Optional[uuid.UUID] = None,
         created_by: Optional[uuid.UUID] = None,
     ) -> DatasetIngestResponse:
         """
-        Validate, hash, profile, and persist a new dataset or new dataset version.
-
-        1. Validates format (CSV, XLSX, JSON) and security signatures.
-        2. Profiles dataset deterministically using Pandas.
-        3. Persists file to local secure storage outside web directories.
-        4. Creates or updates Dataset parent record in database.
-        5. Inserts immutable DatasetVersion record with SHA-256 hash and secure artifact ref.
+        Pure Cloud Control Plane metadata registration handler.
+        Accepts ONLY sanitized metadata, SHA-256 hash, opaque artifact ref, and profiling summary
+        emitted by the Local Data Processing Plane. Zero raw dataset bytes enter this method.
         """
-        # Step 1: Validate file format and security guards
-        file_format = validate_dataset_upload(filename=filename, content=content)
+        dataset: Optional[Dataset] = None
+        if registration.dataset_id:
+            dataset = db.scalar(select(Dataset).where(Dataset.id == registration.dataset_id))
+            if not dataset and require_existing_dataset:
+                raise DatasetNotFoundError(
+                    f"Dataset with ID {registration.dataset_id} does not exist."
+                )
 
-        # Step 2: Deterministic profiling via Pandas
-        profile_result: ProfilingResult = DatasetProfiler.profile(
-            content=content,
-            file_format=file_format,
-        )
-
-        # Step 3: Determine dataset container
-        if dataset_id:
-            # Updating an existing dataset with a new version
-            dataset = db.scalar(select(Dataset).where(Dataset.id == dataset_id))
-            if not dataset:
-                raise DatasetNotFoundError(f"Dataset with ID {dataset_id} does not exist.")
-
-            # Calculate next sequential version number
+        if dataset:
             latest_version_num = db.scalar(
                 select(DatasetVersion.version_number)
                 .where(DatasetVersion.dataset_id == dataset.id)
@@ -94,54 +82,54 @@ class DatasetService:
             ) or 0
             version_number = latest_version_num + 1
         else:
-            # Create new dataset entity
-            dataset_id = uuid.uuid4()
-            effective_name = dataset_name.strip() if dataset_name and dataset_name.strip() else filename
+            target_id = registration.dataset_id or uuid.uuid4()
             dataset = Dataset(
-                id=dataset_id,
-                name=effective_name,
-                description=description,
+                id=target_id,
+                name=registration.dataset_name.strip(),
+                description=registration.description,
                 organization_id=organization_id,
                 created_by=created_by,
             )
             db.add(dataset)
-            db.flush()  # Flush so dataset.id is available
+            db.flush()
             version_number = 1
 
-        # Step 4: Persist raw content to local isolated storage (read-only)
-        artifact_ref, file_size, content_hash = self.storage.store_dataset(
+        # Ensure the opaque artifact reference matches the sequential version number
+        expected_ref = LocalDatasetStorage.build_artifact_ref(
             dataset_id=dataset.id,
             version_number=version_number,
-            content=content,
-            ext=file_format,
+            content_hash=registration.content_hash.lower(),
+            ext=registration.file_format,
+        )
+        effective_ref = (
+            registration.local_artifact_ref
+            if f"/v{version_number}/" in registration.local_artifact_ref
+            else expected_ref
         )
 
-        # Step 5: Insert immutable DatasetVersion record
         version_id = uuid.uuid4()
         dataset_version = DatasetVersion(
             id=version_id,
             dataset_id=dataset.id,
             version_number=version_number,
-            content_hash=content_hash,
-            file_format=file_format,
-            file_size=file_size,
-            local_artifact_ref=artifact_ref,
-            dataset_metadata=profile_result.to_dict(),
+            content_hash=registration.content_hash.lower(),
+            file_format=registration.file_format.lower(),
+            file_size=registration.file_size,
+            local_artifact_ref=effective_ref,
+            dataset_metadata=registration.profile.model_dump(),
         )
         db.add(dataset_version)
 
-        # Step 6: Link current_version_id on parent dataset
         dataset.current_version_id = version_id
         db.commit()
         db.refresh(dataset)
         db.refresh(dataset_version)
 
         logger.info(
-            f"Successfully ingested dataset '{dataset.name}' (ID: {dataset.id}) "
-            f"version v{version_number} [SHA256: {content_hash}] [Ref: {artifact_ref}]"
+            f"Registered sanitized dataset metadata '{dataset.name}' (ID: {dataset.id}) "
+            f"version v{version_number} [SHA256: {dataset_version.content_hash}] "
+            f"[Ref: {dataset_version.local_artifact_ref}]"
         )
-
-        profile_schema = DatasetProfileSchema.model_validate(profile_result.to_dict())
 
         return DatasetIngestResponse(
             dataset_id=dataset.id,
@@ -150,8 +138,69 @@ class DatasetService:
             version_number=dataset_version.version_number,
             content_hash=dataset_version.content_hash,
             local_artifact_ref=dataset_version.local_artifact_ref,
-            profile=profile_schema,
-            message="Dataset successfully ingested, cryptographically hashed, and profiled locally.",
+            profile=registration.profile,
+            message="Dataset processed in local data plane and metadata registered with cloud control plane.",
+        )
+
+    def ingest_dataset(
+        self,
+        filename: str,
+        content: Union[bytes, BinaryIO],
+        db: Session,
+        dataset_name: Optional[str] = None,
+        description: Optional[str] = None,
+        dataset_id: Optional[uuid.UUID] = None,
+        organization_id: Optional[uuid.UUID] = None,
+        created_by: Optional[uuid.UUID] = None,
+    ) -> DatasetIngestResponse:
+        """
+        Bridge helper that dispatches raw file or stream processing strictly to the
+        Local Data Processing Plane (LocalIngestionWorker) and then registers only the
+        resulting sanitized metadata payload with the Cloud Control Plane database.
+        """
+        existing_dataset: Optional[Dataset] = None
+        next_version = 1
+        if dataset_id:
+            existing_dataset = db.scalar(select(Dataset).where(Dataset.id == dataset_id))
+            if not existing_dataset:
+                raise DatasetNotFoundError(f"Dataset with ID {dataset_id} does not exist.")
+            latest_version_num = db.scalar(
+                select(DatasetVersion.version_number)
+                .where(DatasetVersion.dataset_id == existing_dataset.id)
+                .order_by(desc(DatasetVersion.version_number))
+                .limit(1)
+            ) or 0
+            next_version = latest_version_num + 1
+
+        # 1. Execute validation, bounded storage, hashing, and profiling strictly inside LocalIngestionWorker
+        sanitized_payload: SanitizedIngestionPayload = self.local_worker.process_local_file_or_stream(
+            filename=filename,
+            source=content,
+            dataset_id=existing_dataset.id if existing_dataset else None,
+            version_number=next_version,
+            dataset_name=existing_dataset.name if existing_dataset else dataset_name,
+            description=existing_dataset.description if existing_dataset else description,
+        )
+
+        # 2. Construct sanitized metadata registration request (zero raw bytes)
+        registration = DatasetMetadataRegistrationRequest(
+            dataset_id=sanitized_payload.dataset_id,
+            dataset_name=sanitized_payload.dataset_name,
+            description=sanitized_payload.description,
+            content_hash=sanitized_payload.content_hash,
+            file_format=sanitized_payload.file_format,
+            file_size=sanitized_payload.file_size,
+            local_artifact_ref=sanitized_payload.local_artifact_ref,
+            profile=DatasetProfileSchema.model_validate(sanitized_payload.profile),
+        )
+
+        # 3. Register sanitized metadata in Cloud Control Plane
+        return self.register_dataset_metadata(
+            registration=registration,
+            db=db,
+            require_existing_dataset=bool(dataset_id),
+            organization_id=organization_id,
+            created_by=created_by,
         )
 
     def get_dataset(self, dataset_id: uuid.UUID, db: Session) -> DatasetResponse:
@@ -231,28 +280,3 @@ class DatasetService:
             metadata=DatasetProfileSchema.model_validate(version.dataset_metadata),
             created_at=version.created_at,
         )
-
-    def get_raw_dataset_bytes(
-        self,
-        dataset_id: uuid.UUID,
-        version_number: int,
-        db: Session,
-    ) -> Tuple[bytes, str, str]:
-        """
-        Internal worker helper: read raw dataset bytes from local secure storage.
-        Verifies SHA-256 digest integrity during read.
-        Returns: (content_bytes, file_format, content_hash)
-        """
-        version = db.scalar(
-            select(DatasetVersion).where(
-                DatasetVersion.dataset_id == dataset_id,
-                DatasetVersion.version_number == version_number,
-            )
-        )
-        if not version:
-            raise DatasetVersionNotFoundError(
-                f"Version {version_number} for dataset {dataset_id} was not found."
-            )
-
-        content = self.storage.read_dataset(version.local_artifact_ref)
-        return content, version.file_format, version.content_hash

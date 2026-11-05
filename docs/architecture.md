@@ -63,9 +63,9 @@ ReleaseGate separates concerns into two distinct execution environments:
 ```
 
 ### Plane Responsibilities
-* **Cloud Control Plane**: Hosts the React dashboard, FastAPI control API, PostgreSQL relational state machine, RBAC engine, human approval queue, independent reviewer model integration, and append-only audit event service.
-* **Local Data Processing Plane**: Runs the local agent worker, MCP tool server, Pandas dataset profiler, Microsoft Presidio PII detection engine, data quality validator, transformation engine, local encrypted file storage, and publication adapter.
-* **Network Isolation**: The local worker initiates outbound authenticated HTTPS calls to the cloud control plane. The local MCP server is never exposed to the public internet.
+* **Cloud Control Plane**: Hosts the React dashboard, FastAPI control API (`/api/v1/datasets/register-metadata`), PostgreSQL relational state machine, RBAC engine, human approval queue, independent reviewer model integration, and append-only audit event service. Receives **only** sanitized metadata, SHA-256 content hashes, opaque artifact references (`artifact://local/datasets/...`), and profiling summaries.
+* **Local Data Processing Plane**: Runs the local agent worker (`LocalIngestionWorker`), MCP tool server, Pandas dataset profiler, Microsoft Presidio PII detection engine, data quality validator, transformation engine, local encrypted/read-only file storage (`LocalDatasetStorage`), and publication adapter. Owns all raw dataset bytes, bounded-memory stream validation, SHA-256 hashing, and deterministic profiling.
+* **Network Isolation**: The local worker is never publicly exposed and initiates outbound authenticated HTTPS calls (`CloudControlPlaneClient`) to the cloud control plane. The local MCP server is never exposed to the public internet.
 
 ---
 

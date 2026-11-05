@@ -1,12 +1,14 @@
 """
-Local worker package for dataset processing and secure storage.
+Local Worker package for dataset processing, secure storage, and outbound cloud communication.
 """
 
+from local_worker.cloud_client import CloudClientError, CloudControlPlaneClient
 from local_worker.hashing import (
     calculate_sha256_bytes,
     calculate_sha256_file,
     calculate_sha256_stream,
 )
+from local_worker.ingestion_service import LocalIngestionWorker, SanitizedIngestionPayload
 from local_worker.secure_storage import (
     LocalDatasetStorage,
     SecureStorageError,
@@ -15,6 +17,7 @@ from local_worker.secure_storage import (
 from local_worker.validator import (
     DatasetEmptyError,
     DatasetValidationError,
+    validate_dataset_stream,
     validate_dataset_upload,
 )
 
@@ -28,4 +31,9 @@ __all__ = [
     "DatasetValidationError",
     "DatasetEmptyError",
     "validate_dataset_upload",
+    "validate_dataset_stream",
+    "LocalIngestionWorker",
+    "SanitizedIngestionPayload",
+    "CloudControlPlaneClient",
+    "CloudClientError",
 ]

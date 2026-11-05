@@ -4,6 +4,7 @@ Pydantic schemas package for request/response serialization and validation.
 
 from app.schemas.dataset import (
     DatasetIngestResponse,
+    DatasetMetadataRegistrationRequest,
     DatasetProfileSchema,
     DatasetResponse,
     DatasetVersionResponse,
@@ -15,6 +16,7 @@ __all__ = [
     "ReadinessCheckItem",
     "ReadinessResponse",
     "DatasetProfileSchema",
+    "DatasetMetadataRegistrationRequest",
     "DatasetVersionResponse",
     "DatasetResponse",
     "DatasetIngestResponse",

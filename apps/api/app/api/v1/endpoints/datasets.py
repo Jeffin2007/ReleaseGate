@@ -1,7 +1,12 @@
 """
-Dataset ingestion and inspection REST endpoints.
-Allows authenticated-ready dataset upload, deterministic profiling, and version inspection.
-Guarantees raw files remain strictly in local isolated storage.
+Dataset metadata coordination and local ingestion gateway REST endpoints.
+Strictly enforces the ReleaseGate Hybrid Architecture Baseline v1.0:
+1. POST /datasets/register-metadata: Pure Cloud Control Plane endpoint that accepts ONLY
+   sanitized metadata, SHA-256 hashes, opaque artifact references, and profiling summaries
+   sent outbound by the Local Worker.
+2. POST /datasets/ingest: Local-worker gateway adapter that streams upload chunks directly
+   to the LocalIngestionWorker with bounded memory usage (never calling await file.read()
+   to load the full file into Cloud API RAM) and registers only sanitized metadata.
 """
 
 import uuid
@@ -10,13 +15,19 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.schemas.dataset import DatasetIngestResponse, DatasetResponse, DatasetVersionResponse
+from app.schemas.dataset import (
+    DatasetIngestResponse,
+    DatasetMetadataRegistrationRequest,
+    DatasetResponse,
+    DatasetVersionResponse,
+)
 from app.services.dataset_service import (
     DatasetNotFoundError,
     DatasetService,
     DatasetVersionNotFoundError,
 )
 from engines.dataset_profiler.profiler import ProfilingError
+from local_worker.secure_storage import SecureStorageError
 from local_worker.validator import DatasetEmptyError, DatasetValidationError
 
 router = APIRouter(prefix="/datasets", tags=["Dataset Ingestion & Governance"])
@@ -24,38 +35,72 @@ dataset_service = DatasetService()
 
 
 @router.post(
+    "/register-metadata",
+    response_model=DatasetIngestResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register Sanitized Dataset Metadata (Cloud Control Plane)",
+    description=(
+        "Pure Cloud Control Plane endpoint called outbound by the Local Worker. "
+        "Receives ONLY sanitized metadata, SHA-256 content hashes, opaque artifact references, "
+        "and deterministic profiling summaries. Raw dataset bytes never enter this endpoint."
+    ),
+)
+def register_dataset_metadata(
+    registration: DatasetMetadataRegistrationRequest,
+    db: Session = Depends(get_db),
+) -> DatasetIngestResponse:
+    """Register sanitized dataset metadata emitted by the Local Data Processing Plane."""
+    try:
+        return dataset_service.register_dataset_metadata(
+            registration=registration,
+            db=db,
+        )
+    except DatasetNotFoundError as err:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(err),
+        ) from err
+    except Exception as err:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to register dataset metadata: {str(err)}",
+        ) from err
+
+
+@router.post(
     "/ingest",
     response_model=DatasetIngestResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Ingest Dataset File",
+    summary="Local Worker Ingestion Gateway (Bounded Stream)",
     description=(
-        "Uploads a CSV, XLSX, or JSON dataset. Validates magic bytes and structure, "
-        "calculates cryptographic SHA-256 hash, performs deterministic Pandas profiling, "
-        "and securely stores the raw data locally outside web directories."
+        "Streams a dataset file directly to the LocalIngestionWorker using a bounded file-like stream "
+        "(SpooledTemporaryFile) without loading the raw payload into Cloud API memory, then registers "
+        "only the sanitized metadata with the Cloud Control Plane."
     ),
 )
-async def ingest_dataset(
+def ingest_dataset(
     file: UploadFile = File(..., description="Dataset file (CSV, XLSX, JSON)"),
     dataset_name: Optional[str] = Form(None, description="Optional custom dataset name"),
     description: Optional[str] = Form(None, description="Optional dataset description"),
     dataset_id: Optional[uuid.UUID] = Form(None, description="Target dataset ID if creating a new version"),
     db: Session = Depends(get_db),
 ) -> DatasetIngestResponse:
-    """Ingest, validate, hash, profile, and persist a dataset file."""
+    """Stream upload directly into LocalIngestionWorker with bounded memory and register sanitized metadata."""
     try:
-        content = await file.read()
         filename = file.filename or "uploaded_dataset"
 
+        # Pass the underlying SpooledTemporaryFile stream (file.file) directly to the local worker
+        # so the FastAPI route never calls `await file.read()` to buffer unbounded bytes in RAM.
         result = dataset_service.ingest_dataset(
             filename=filename,
-            content=content,
+            content=file.file,
             dataset_name=dataset_name,
             description=description,
             dataset_id=dataset_id,
             db=db,
         )
         return result
-    except (DatasetValidationError, DatasetEmptyError, ProfilingError) as err:
+    except (DatasetValidationError, DatasetEmptyError, ProfilingError, SecureStorageError) as err:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Dataset validation failed: {str(err)}",
@@ -75,7 +120,7 @@ async def ingest_dataset(
 @router.get(
     "",
     response_model=List[DatasetResponse],
-    summary="List Ingested Datasets",
+    summary="List Registered Datasets",
     description="Retrieve all registered dataset containers with summary version counts.",
 )
 def list_datasets(
