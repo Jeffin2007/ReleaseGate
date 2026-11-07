@@ -85,3 +85,39 @@ class CloudControlPlaneClient:
                     f"(HTTP {response.status_code}): {response.text}"
                 )
             return response.json()
+
+    def record_inspection_run(
+        self,
+        payload: Any,
+        organization_id: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Send sanitized inspection run and findings outbound to the Cloud Control Plane.
+        Strictly enforces that no raw dataset values or sensitive tokens are included.
+        """
+        if hasattr(payload, "model_dump"):
+            body = payload.model_dump(mode="json")
+        elif isinstance(payload, dict):
+            body = payload
+        else:
+            raise CloudClientError(f"Unsupported inspection payload type: {type(payload)}")
+
+        headers = self._get_headers()
+        params = {}
+        if organization_id:
+            headers["X-Organization-ID"] = str(organization_id)
+            params["organization_id"] = str(organization_id)
+
+        with httpx.Client(
+            base_url=self.base_url,
+            headers=headers,
+            timeout=self.timeout_seconds,
+            transport=self.transport,
+        ) as client:
+            response = client.post("/api/v1/inspections/record", json=body, params=params)
+            if response.status_code not in (200, 201):
+                raise CloudClientError(
+                    f"Cloud Control Plane rejected inspection run persistence "
+                    f"(HTTP {response.status_code}): {response.text}"
+                )
+            return response.json()

@@ -25,6 +25,11 @@ from local_worker.secure_storage import (  # noqa: E402
     SecureStorageError,
     StorageIntegrityError,
 )
+from local_worker.inspection_pipeline import (  # noqa: E402
+    AuditableInspectionResult,
+    DatasetInspectionWorkflow,
+    InspectionWorkflowError,
+)
 from local_worker.validator import (  # noqa: E402
     DatasetEmptyError,
     DatasetValidationError,
@@ -47,4 +52,7 @@ __all__ = [
     "SanitizedIngestionPayload",
     "CloudControlPlaneClient",
     "CloudClientError",
+    "DatasetInspectionWorkflow",
+    "AuditableInspectionResult",
+    "InspectionWorkflowError",
 ]

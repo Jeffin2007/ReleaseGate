@@ -44,7 +44,7 @@ class InspectionService:
 
     def record_inspection_run(
         self,
-        org_id: uuid.UUID,
+        org_id: Optional[uuid.UUID],
         run_in: InspectionRunCreate,
         db: Session,
     ) -> InspectionRunResponse:
@@ -56,11 +56,33 @@ class InspectionService:
         if not dataset:
             raise InspectionServiceError(f"Dataset '{run_in.dataset_id}' not found.")
 
+        # If org_id is not provided, resolve from dataset or create/find default
+        if org_id is None:
+            if dataset.organization_id is not None:
+                effective_org_id = dataset.organization_id
+            else:
+                from app.db.models.identity import Organization
+                existing_org = db.scalar(select(Organization).limit(1))
+                if existing_org:
+                    effective_org_id = existing_org.id
+                else:
+                    default_org = Organization(
+                        id=uuid.uuid4(),
+                        name="Default Organization",
+                        slug="default",
+                    )
+                    db.add(default_org)
+                    db.flush()
+                    effective_org_id = default_org.id
+                dataset.organization_id = effective_org_id
+        else:
+            effective_org_id = org_id
+
         # If dataset has an organization, verify it matches
-        if dataset.organization_id is not None and dataset.organization_id != org_id:
+        if dataset.organization_id is not None and dataset.organization_id != effective_org_id:
             raise CrossOrganizationAccessError(
                 f"Dataset '{dataset.id}' belongs to organization '{dataset.organization_id}', "
-                f"not '{org_id}'."
+                f"not '{effective_org_id}'."
             )
 
         version = db.scalar(
@@ -78,7 +100,7 @@ class InspectionService:
         now = datetime.now(timezone.utc)
         inspection_run = InspectionRun(
             id=run_id,
-            organization_id=org_id,
+            organization_id=effective_org_id,
             dataset_id=dataset.id,
             dataset_version_id=version.id,
             inspection_type=run_in.inspection_type.value,
@@ -99,7 +121,7 @@ class InspectionService:
         for finding_in in run_in.findings:
             finding = Finding(
                 id=uuid.uuid4(),
-                organization_id=org_id,
+                organization_id=effective_org_id,
                 inspection_run_id=inspection_run.id,
                 dataset_version_id=version.id,
                 finding_type=finding_in.finding_type.value,
@@ -138,32 +160,29 @@ class InspectionService:
 
     def get_inspection_run(
         self,
-        org_id: uuid.UUID,
+        org_id: Optional[uuid.UUID],
         run_id: uuid.UUID,
         db: Session,
     ) -> InspectionRunResponse:
         """
-        Fetch inspection run by ID, strictly verifying organization ownership.
+        Fetch inspection run by ID, strictly verifying organization ownership when org_id is provided.
         """
-        run = db.scalar(
-            select(InspectionRun).where(
-                InspectionRun.id == run_id,
-                InspectionRun.organization_id == org_id,
-            )
-        )
-        if not run:
-            raise InspectionRunNotFoundError(
-                f"InspectionRun '{run_id}' not found for organization '{org_id}'."
-            )
+        query = select(InspectionRun).where(InspectionRun.id == run_id)
+        if org_id is not None:
+            query = query.where(InspectionRun.organization_id == org_id)
 
-        findings = db.scalars(
-            select(Finding)
-            .where(
-                Finding.inspection_run_id == run.id,
-                Finding.organization_id == org_id,
-            )
-            .order_by(desc(Finding.created_at))
-        ).all()
+        run = db.scalar(query)
+        if not run:
+            msg = f"InspectionRun '{run_id}' not found"
+            if org_id:
+                msg += f" for organization '{org_id}'"
+            raise InspectionRunNotFoundError(f"{msg}.")
+
+        findings_query = select(Finding).where(Finding.inspection_run_id == run.id)
+        if org_id is not None:
+            findings_query = findings_query.where(Finding.organization_id == org_id)
+
+        findings = db.scalars(findings_query.order_by(desc(Finding.created_at))).all()
 
         return InspectionRunResponse(
             id=run.id,
@@ -185,36 +204,37 @@ class InspectionService:
 
     def list_inspection_runs_for_dataset(
         self,
-        org_id: uuid.UUID,
+        org_id: Optional[uuid.UUID],
         dataset_id: uuid.UUID,
         db: Session,
         version_id: Optional[uuid.UUID] = None,
     ) -> List[InspectionRunResponse]:
         """List all inspection runs for a dataset within an organization."""
-        query = select(InspectionRun).where(
-            InspectionRun.organization_id == org_id,
-            InspectionRun.dataset_id == dataset_id,
-        )
+        query = select(InspectionRun).where(InspectionRun.dataset_id == dataset_id)
+        if org_id is not None:
+            query = query.where(InspectionRun.organization_id == org_id)
         if version_id:
             query = query.where(InspectionRun.dataset_version_id == version_id)
 
         runs = db.scalars(query.order_by(desc(InspectionRun.started_at))).all()
-        return [self.get_inspection_run(org_id, r.id, db) for r in runs]
+        return [self.get_inspection_run(r.organization_id, r.id, db) for r in runs]
 
     def list_findings_for_version(
         self,
-        org_id: uuid.UUID,
+        org_id: Optional[uuid.UUID],
         version_id: uuid.UUID,
         db: Session,
         severity: Optional[str] = None,
+        finding_type: Optional[str] = None,
     ) -> List[FindingResponse]:
         """Query findings connected to a dataset version, scoped by organization."""
-        query = select(Finding).where(
-            Finding.organization_id == org_id,
-            Finding.dataset_version_id == version_id,
-        )
+        query = select(Finding).where(Finding.dataset_version_id == version_id)
+        if org_id is not None:
+            query = query.where(Finding.organization_id == org_id)
         if severity:
             query = query.where(Finding.severity == severity.upper())
+        if finding_type:
+            query = query.where(Finding.finding_type == finding_type.upper())
 
         findings = db.scalars(query.order_by(desc(Finding.created_at))).all()
         return [FindingResponse.model_validate(f) for f in findings]

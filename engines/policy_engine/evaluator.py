@@ -242,7 +242,8 @@ class PolicyEngine:
                 evidence_references=[],
             )
 
-        license_name = str(provenance.get("license", "UNKNOWN")).strip().upper()
+        raw_license = provenance.get("license") or provenance.get("license_type") or "UNKNOWN"
+        license_name = str(raw_license).strip().upper()
         normalized_allowed = [l.upper() for l in self.config.licensing_provenance.allowed_licenses]
         normalized_forbidden = [l.upper() for l in self.config.licensing_provenance.forbidden_licenses]
 

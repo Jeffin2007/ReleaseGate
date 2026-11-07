@@ -144,6 +144,64 @@ The local MCP server exposes exactly 12 schema-validated tools:
 | 11 | `verify_publication` | Verify target destination receipt, accessibility, and hash matching. |
 | 12 | `withdraw_release` | Cancel or recall a release request in progress or on hold. |
 
+### 5.1 Complete Dataset Inspection Workflow (Prompt 10)
+
+The `DatasetInspectionWorkflow` pipeline (`local_worker.inspection_pipeline`) coordinates four deterministic inspection engines into an auditable, end-to-end governance process executing exclusively inside Environment B (Local Processing Plane):
+
+```
++-----------------------------------------------------------------------------------------------+
+|                             Local Processing Plane (Environment B)                            |
+|                                                                                               |
+|  [Raw Dataset / Artifact]                                                                     |
+|            |                                                                                  |
+|            v                                                                                  |
+|  +--------------------+      +--------------------+      +--------------------+               |
+|  |  Dataset Profiler  | ---> |   PII Detector     | ---> | Quality Validator  |               |
+|  |  (Pandas Engine)   |      | (Presidio Analyzer)|      |  (Rule Engine)     |               |
+|  +--------------------+      +--------------------+      +--------------------+               |
+|            |                           |                           |                          |
+|            | [Metrics]                 | [PII Findings]            | [Quality Issues]         |
+|            +---------------------------+---------------------------+                          |
+|                                        |                                                      |
+|                                        v                                                      |
+|                             +--------------------+                                            |
+|                             |   Policy Engine    |                                            |
+|                             |  (100-Point Model) |                                            |
+|                             +--------------------+                                            |
+|                                        |                                                      |
+|                                        v                                                      |
+|                       +---------------------------------+                                     |
+|                       |  Auditable Inspection Result    |                                     |
+|                       |  - Risk Score & Band (0-100)    |                                     |
+|                       |  - Release Eligibility Decision |                                     |
+|                       |  - Granular Findings (Zero Raw) |                                     |
+|                       |  - Unified Summary Report       |                                     |
+|                       +---------------------------------+                                     |
+|                                        |                                                      |
++----------------------------------------|------------------------------------------------------+
+                                         | Outbound HTTP POST /api/v1/inspections/record
+                                         v (Sanitized Metadata, Hashes, Coordinates Only)
++-----------------------------------------------------------------------------------------------+
+|                            Cloud Control Plane (Environment A)                                |
+|                                                                                               |
+|  FastAPI Endpoints:                                                                           |
+|  - POST /api/v1/inspections/record              -> Persists InspectionRun & Findings          |
+|  - GET  /api/v1/inspections/{id}                -> Retrieves run with granular findings       |
+|  - GET  /api/v1/inspections/dataset/{id}        -> Lists runs for dataset container           |
+|  - GET  /api/v1/inspections/versions/{id}/findings -> Lists findings for version (filters)   |
+|                                                                                               |
+|  PostgreSQL Database:                                                                         |
+|  - `inspection_runs`: Status, risk_score, risk_band, policy_version, is_release_eligible      |
+|  - `findings`: Categorized PII & Quality issues with cryptographic evidence hashes            |
++-----------------------------------------------------------------------------------------------+
+```
+
+#### Pipeline Guarantees:
+1. **Zero Raw Value Leakage**: All findings and summary reports contain entity types, coordinates, counts, scores, and cryptographic hashes (`evidence_hash`). No raw text, confidential names, or private credentials ever enter outbound payloads.
+2. **Deterministic Reproducibility**: Repeated inspections on identical dataset bytes yield byte-for-byte identical risk scores, risk bands, finding counts, and evidence references.
+3. **Hard Blocking Overrides**: Critical policy violations (prohibited domain, forbidden licenses, critical credential leakage) immediately set `is_release_eligible=False` regardless of overall aggregate score.
+4. **Tenant-Scoped Persistence**: Every inspection run and finding is strictly bound to an `organization_id`, ensuring fail-closed isolation across multi-tenant workspaces.
+
 ---
 
 ## 6. PostgreSQL Database Architecture (All 13 Entities)

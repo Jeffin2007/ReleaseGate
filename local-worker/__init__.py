@@ -8,6 +8,11 @@ from local_worker.hashing import (
     calculate_sha256_file,
     calculate_sha256_stream,
 )
+from local_worker.inspection_pipeline import (
+    AuditableInspectionResult,
+    DatasetInspectionWorkflow,
+    InspectionWorkflowError,
+)
 from local_worker.ingestion_service import LocalIngestionWorker, SanitizedIngestionPayload
 from local_worker.secure_storage import (
     LocalDatasetStorage,
@@ -36,4 +41,7 @@ __all__ = [
     "SanitizedIngestionPayload",
     "CloudControlPlaneClient",
     "CloudClientError",
+    "DatasetInspectionWorkflow",
+    "AuditableInspectionResult",
+    "InspectionWorkflowError",
 ]
