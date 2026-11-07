@@ -155,3 +155,55 @@ class LocalIngestionWorker:
             local_artifact_ref=artifact_ref,
             profile=profile_result.to_dict(),
         )
+
+    def scan_pii_for_artifact(
+        self,
+        artifact_ref: str,
+        dataset_id: uuid.UUID,
+        version_number: int = 1,
+        pii_config: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute deterministic local PII detection on a locally stored dataset artifact.
+        Emits only sanitized report metadata suitable for outbound synchronization.
+        """
+        from engines.pii_detector import PIIDetector
+
+        raw_bytes = self.storage.read_dataset(artifact_ref)
+        file_format = Path(artifact_ref).suffix.lstrip(".")
+        detector = PIIDetector(config=pii_config)
+        report = detector.scan_dataset_bytes(
+            content=raw_bytes,
+            file_format=file_format,
+            dataset_id=str(dataset_id),
+            version_number=version_number,
+        )
+        return report.to_cloud_metadata()
+
+    def validate_quality_for_artifact(
+        self,
+        artifact_ref: str,
+        dataset_id: uuid.UUID,
+        version_number: int = 1,
+        quality_config: Optional[Any] = None,
+        inspection_run_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute deterministic data quality validation on a locally stored dataset artifact.
+        Emits only sanitized report metadata suitable for outbound synchronization.
+        """
+        from engines.quality_validator import QualityValidator
+
+        raw_bytes = self.storage.read_dataset(artifact_ref)
+        file_format = Path(artifact_ref).suffix.lstrip(".")
+        validator = QualityValidator(config=quality_config)
+        report = validator.validate_dataset_bytes(
+            content=raw_bytes,
+            file_format=file_format,
+            dataset_id=str(dataset_id),
+            version_number=version_number,
+            inspection_run_id=inspection_run_id,
+        )
+        return report.to_cloud_metadata()
+
+

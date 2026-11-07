@@ -282,3 +282,69 @@ def test_secure_storage_read_and_integrity_check(temp_storage: LocalDatasetStora
     internal_path = temp_storage.resolve_ref_to_internal_path(artifact_ref)
     assert internal_path.is_file()
     assert expected_hash in internal_path.name
+
+
+def test_local_worker_pii_scan_integration(temp_storage: LocalDatasetStorage):
+    """Verify LocalIngestionWorker runs deterministic PII scanning on stored artifacts."""
+    import uuid
+
+    dataset_id = uuid.uuid4()
+    csv_data = b"client_id,contact_email,balance\n101,sarah@fintech.io,5000\n102,dave@fintech.io,7500\n"
+
+    worker = LocalIngestionWorker(storage=temp_storage)
+    payload = worker.process_local_file_or_stream(
+        filename="accounts.csv",
+        source=csv_data,
+        dataset_id=dataset_id,
+        version_number=1,
+    )
+
+    pii_report_meta = worker.scan_pii_for_artifact(
+        artifact_ref=payload.local_artifact_ref,
+        dataset_id=dataset_id,
+        version_number=1,
+    )
+
+    assert pii_report_meta["dataset_id"] == str(dataset_id)
+    assert pii_report_meta["version_number"] == 1
+    assert pii_report_meta["has_high_pii"] is True
+    assert pii_report_meta["findings_count"] >= 1
+
+
+def test_local_worker_quality_validation_integration(temp_storage: LocalDatasetStorage):
+    """Verify LocalIngestionWorker runs deterministic quality validation on stored artifacts."""
+    import uuid
+    from engines.quality_validator import ColumnRule, QualityValidationConfig
+
+    dataset_id = uuid.uuid4()
+    csv_data = b"txn_id,amount,status\nTXN-01,150.0,APPROVED\nTXN-02,-10.0,INVALID\n"
+
+    worker = LocalIngestionWorker(storage=temp_storage)
+    payload = worker.process_local_file_or_stream(
+        filename="transactions.csv",
+        source=csv_data,
+        dataset_id=dataset_id,
+        version_number=1,
+    )
+
+    quality_config = QualityValidationConfig(
+        column_rules=[
+            ColumnRule(column_name="amount", min_value=0.0),
+            ColumnRule(column_name="status", allowed_values=["APPROVED", "REJECTED"]),
+        ]
+    )
+
+    quality_meta = worker.validate_quality_for_artifact(
+        artifact_ref=payload.local_artifact_ref,
+        dataset_id=dataset_id,
+        version_number=1,
+        quality_config=quality_config,
+    )
+
+    assert quality_meta["dataset_id"] == str(dataset_id)
+    assert quality_meta["version_number"] == 1
+    assert quality_meta["issues_count"] >= 2
+    assert "amount" in quality_meta["affected_columns"]
+    assert "status" in quality_meta["affected_columns"]
+
+
