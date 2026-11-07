@@ -65,5 +65,16 @@
   "tests/test_quality_validator.py::test_reproducibility_across_repeated_runs",
   "tests/test_quality_validator.py::test_required_columns_schema_validation",
   "tests/test_quality_validator.py::test_validate_dataset_bytes_csv_and_json",
-  "tests/test_quality_validator.py::test_zero_raw_value_leakage_in_cloud_metadata"
+  "tests/test_quality_validator.py::test_zero_raw_value_leakage_in_cloud_metadata",
+  "tests/test_transformation_engine.py::test_deterministic_output_hash_integrity",
+  "tests/test_transformation_engine.py::test_end_to_end_post_transformation_revalidation",
+  "tests/test_transformation_engine.py::test_filter_rows_declarative_operators",
+  "tests/test_transformation_engine.py::test_generalize_column_numeric_date_and_category",
+  "tests/test_transformation_engine.py::test_invalid_operation_nonexistent_column",
+  "tests/test_transformation_engine.py::test_mask_column_all_strategies",
+  "tests/test_transformation_engine.py::test_pseudonymize_column_deterministic",
+  "tests/test_transformation_engine.py::test_remove_column_operation",
+  "tests/test_transformation_engine.py::test_security_rejects_arbitrary_code_injection",
+  "tests/test_transformation_engine.py::test_source_dataset_immutability",
+  "tests/test_transformation_engine.py::test_zero_raw_value_leakage_in_preview_and_metadata"
 ]

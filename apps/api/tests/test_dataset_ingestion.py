@@ -348,3 +348,53 @@ def test_local_worker_quality_validation_integration(temp_storage: LocalDatasetS
     assert "status" in quality_meta["affected_columns"]
 
 
+def test_local_worker_transformation_integration(temp_storage: LocalDatasetStorage):
+    """Verify LocalIngestionWorker transforms a stored artifact into a new immutable version."""
+    import uuid
+    from engines.transformation_engine import MaskColumnOp, MaskingStrategy, RemoveColumnOp, TransformationSpec
+
+    dataset_id = uuid.uuid4()
+    raw_v1 = b"user_id,ssn,email,points\n1,123-45-6789,alice@example.com,100\n2,987-65-4321,bob@example.com,200\n"
+
+    worker = LocalIngestionWorker(storage=temp_storage)
+    v1_payload = worker.process_local_file_or_stream(
+        filename="users.csv",
+        source=raw_v1,
+        dataset_id=dataset_id,
+        version_number=1,
+    )
+
+    spec = TransformationSpec(
+        operations=[
+            RemoveColumnOp(column_name="ssn"),
+            MaskColumnOp(column_name="email", strategy=MaskingStrategy.PARTIAL_EMAIL),
+        ]
+    )
+
+    v2_meta = worker.transform_artifact(
+        artifact_ref=v1_payload.local_artifact_ref,
+        spec=spec,
+        dataset_id=dataset_id,
+        input_version=1,
+        output_version=2,
+        run_post_verification=False,
+    )
+
+    assert v2_meta["dataset_id"] == str(dataset_id)
+    assert v2_meta["input_version"] == 1
+    assert v2_meta["output_version"] == 2
+    assert v2_meta["output_hash"] != v1_payload.content_hash
+    assert v2_meta["output_artifact_ref"] is not None
+
+    # Verify original V1 stored artifact remains unchanged
+    v1_stored = temp_storage.read_dataset(v1_payload.local_artifact_ref)
+    assert v1_stored == raw_v1
+    assert b"ssn" in v1_stored
+
+    # Verify new V2 stored artifact has ssn removed
+    v2_stored = temp_storage.read_dataset(v2_meta["output_artifact_ref"])
+    assert b"ssn" not in v2_stored
+    assert b"a***e@example.com" in v2_stored
+
+
+

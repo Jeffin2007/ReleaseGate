@@ -206,4 +206,37 @@ class LocalIngestionWorker:
         )
         return report.to_cloud_metadata()
 
+    def transform_artifact(
+        self,
+        artifact_ref: str,
+        spec: Any,
+        dataset_id: uuid.UUID,
+        input_version: int,
+        output_version: int,
+        run_post_verification: bool = True,
+        metadata_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute safe, allowlisted transformations on a stored dataset artifact.
+        Produces a new immutable artifact version and calculates its SHA-256 hash.
+        The original artifact remains completely unmodified.
+        """
+        from engines.transformation_engine import TransformationEngine
+
+        raw_bytes = self.storage.read_dataset(artifact_ref)
+        file_format = Path(artifact_ref).suffix.lstrip(".")
+        result = TransformationEngine.transform_dataset_bytes(
+            content=raw_bytes,
+            file_format=file_format,
+            spec=spec,
+            dataset_id=str(dataset_id),
+            input_version=input_version,
+            output_version=output_version,
+            storage=self.storage,
+            run_post_verification=run_post_verification,
+            metadata_context=metadata_context,
+        )
+        return result.to_cloud_metadata()
+
+
 
