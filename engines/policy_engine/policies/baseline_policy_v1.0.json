@@ -1,0 +1,78 @@
+{
+  "policy_id": "releasegate-baseline-v1",
+  "policy_name": "Frozen Architecture Baseline Policy",
+  "policy_version": "1.0.0",
+  "description": "Frozen Architecture Baseline v1.0 standard release governance policy.",
+  "max_acceptable_score": 39.99,
+  "sensitive_info": {
+    "max_points": 35.0,
+    "block_on_critical_pii": true,
+    "block_on_high_pii": false,
+    "points_per_high_finding": 12.0,
+    "points_per_medium_finding": 4.0,
+    "points_per_low_finding": 1.0
+  },
+  "data_quality": {
+    "max_points": 20.0,
+    "min_acceptable_quality_score": 85.0,
+    "block_on_critical_quality_issues": true,
+    "points_per_critical_issue": 10.0,
+    "points_per_high_issue": 5.0,
+    "points_per_medium_issue": 2.0
+  },
+  "licensing_provenance": {
+    "max_points": 20.0,
+    "allowed_licenses": [
+      "MIT",
+      "Apache-2.0",
+      "BSD-2-Clause",
+      "BSD-3-Clause",
+      "CC0-1.0",
+      "CC-BY-4.0",
+      "OpenData-1.0"
+    ],
+    "forbidden_licenses": [
+      "GPL-2.0",
+      "GPL-3.0",
+      "AGPL-3.0",
+      "PROPRIETARY_UNLICENSED",
+      "NONE",
+      "UNKNOWN"
+    ],
+    "block_on_forbidden_license": true,
+    "require_provenance_source": true,
+    "points_for_missing_provenance": 10.0,
+    "points_for_unapproved_license": 15.0
+  },
+  "metadata_completeness": {
+    "max_points": 10.0,
+    "required_fields": [
+      "dataset_name",
+      "description",
+      "file_format",
+      "file_size",
+      "content_hash"
+    ],
+    "recommended_fields": [
+      "intended_use",
+      "domain",
+      "data_custodian"
+    ],
+    "block_on_missing_required_fields": true,
+    "points_per_missing_required": 3.0,
+    "points_per_missing_recommended": 1.0
+  },
+  "policy_violations": {
+    "max_points": 15.0,
+    "prohibited_domains": [
+      "biometrics_unconsented",
+      "classified_defense",
+      "underage_surveillance",
+      "credit_scoring_unregulated"
+    ],
+    "require_retention_policy": true,
+    "block_on_prohibited_domain": true,
+    "points_for_prohibited_domain": 15.0,
+    "points_for_missing_retention": 5.0
+  }
+}
