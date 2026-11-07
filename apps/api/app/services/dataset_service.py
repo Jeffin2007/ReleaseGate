@@ -41,6 +41,12 @@ class DatasetVersionNotFoundError(DatasetServiceError):
     pass
 
 
+class CrossOrganizationAccessError(DatasetServiceError):
+    """Raised when attempting to access a dataset from another organization."""
+    pass
+
+
+
 class DatasetService:
     """
     Cloud Control Plane Metadata Coordination Service.
@@ -138,11 +144,22 @@ class DatasetService:
             message="Dataset metadata registered successfully in Cloud Control Plane.",
         )
 
-    def get_dataset(self, dataset_id: uuid.UUID, db: Session) -> DatasetResponse:
-        """Fetch dataset by ID along with its version history."""
+    def get_dataset(
+        self,
+        dataset_id: uuid.UUID,
+        db: Session,
+        organization_id: Optional[uuid.UUID] = None,
+    ) -> DatasetResponse:
+        """Fetch dataset by ID along with its version history, enforcing organization isolation."""
         dataset = db.scalar(select(Dataset).where(Dataset.id == dataset_id))
         if not dataset:
             raise DatasetNotFoundError(f"Dataset with ID {dataset_id} was not found.")
+
+        if organization_id is not None and dataset.organization_id is not None:
+            if dataset.organization_id != organization_id:
+                raise CrossOrganizationAccessError(
+                    f"Access denied: Dataset '{dataset_id}' belongs to a different organization."
+                )
 
         versions = db.scalars(
             select(DatasetVersion)
@@ -175,24 +192,32 @@ class DatasetService:
             versions=version_responses,
         )
 
-    def list_datasets(self, db: Session, limit: int = 100, skip: int = 0) -> List[DatasetResponse]:
-        """List datasets with pagination."""
-        datasets = db.scalars(
-            select(Dataset)
-            .order_by(desc(Dataset.created_at))
-            .offset(skip)
-            .limit(limit)
-        ).all()
+    def list_datasets(
+        self,
+        db: Session,
+        organization_id: Optional[uuid.UUID] = None,
+        limit: int = 100,
+        skip: int = 0,
+    ) -> List[DatasetResponse]:
+        """List datasets with pagination, optionally isolated to a specific organization."""
+        query = select(Dataset).order_by(desc(Dataset.created_at)).offset(skip).limit(limit)
+        if organization_id is not None:
+            query = query.where(Dataset.organization_id == organization_id)
 
-        return [self.get_dataset(d.id, db) for d in datasets]
+        datasets = db.scalars(query).all()
+        return [self.get_dataset(d.id, db, organization_id=organization_id) for d in datasets]
 
     def get_dataset_version(
         self,
         dataset_id: uuid.UUID,
         version_number: int,
         db: Session,
+        organization_id: Optional[uuid.UUID] = None,
     ) -> DatasetVersionResponse:
-        """Fetch a specific immutable version of a dataset."""
+        """Fetch a specific immutable version of a dataset, enforcing organization boundaries."""
+        # Verify parent dataset first
+        self.get_dataset(dataset_id, db, organization_id=organization_id)
+
         version = db.scalar(
             select(DatasetVersion).where(
                 DatasetVersion.dataset_id == dataset_id,
@@ -215,3 +240,4 @@ class DatasetService:
             metadata=DatasetProfileSchema.model_validate(version.dataset_metadata),
             created_at=version.created_at,
         )
+

@@ -29,8 +29,10 @@ if config.config_file_name is not None:
 # Model metadata for autogenerate support
 target_metadata = Base.metadata
 
-# Override sqlalchemy.url with dynamic application setting
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# Override sqlalchemy.url with dynamic application setting unless explicitly provided
+current_url = config.get_main_option("sqlalchemy.url")
+if not current_url or "localhost:5432/releasegate_db" in current_url:
+    config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 
 def run_migrations_offline() -> None:
@@ -38,7 +40,7 @@ def run_migrations_offline() -> None:
     Run migrations in 'offline' mode.
     Configures the context with just a URL and not an Engine.
     """
-    url = config.get_main_option("sqlalchemy.url")
+    url = config.get_main_option("sqlalchemy.url") or settings.DATABASE_URL
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -56,8 +58,9 @@ def run_migrations_online() -> None:
     Run migrations in 'online' mode.
     Creates an Engine and associates a connection with the context.
     """
+    effective_url = config.get_main_option("sqlalchemy.url") or settings.DATABASE_URL
     configuration = config.get_section(config.config_ini_section) or {}
-    configuration["sqlalchemy.url"] = settings.DATABASE_URL
+    configuration["sqlalchemy.url"] = effective_url
 
     connectable = engine_from_config(
         configuration,

@@ -1,4 +1,12 @@
 [
+  "tests/test_authorization.py::test_alembic_migration_from_empty_database",
+  "tests/test_authorization.py::test_cascading_deletion_and_relational_integrity",
+  "tests/test_authorization.py::test_immutable_dataset_version_unique_constraint",
+  "tests/test_authorization.py::test_organization_and_user_creation",
+  "tests/test_authorization.py::test_organization_data_isolation_datasets",
+  "tests/test_authorization.py::test_organization_data_isolation_inspections_and_findings",
+  "tests/test_authorization.py::test_password_hashing_and_verification",
+  "tests/test_authorization.py::test_rbac_membership_assignment_and_hierarchy",
   "tests/test_config.py::test_api_prefix_normalization",
   "tests/test_config.py::test_default_settings_valid",
   "tests/test_config.py::test_invalid_database_url_scheme_fails",

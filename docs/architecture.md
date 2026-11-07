@@ -162,20 +162,63 @@ organizations (1) ---> (N) memberships <--- (N) users
                                                  +---> executes execution_records
 ```
 
-### Entity Specifications
-1. `users`: System user accounts, emails, hashed credentials, status.
-2. `organizations`: Workspaces and organization boundary definitions.
-3. `memberships`: Granular RBAC role mapping (User, Admin, Steward, Auditor).
-4. `datasets`: Core dataset entity metadata.
-5. `dataset_versions`: Immutable version records containing `content_hash` (SHA-256).
-6. `inspection_runs`: Execution logs for local profiler/Presidio runs and risk scores.
-7. `findings`: Detailed PII/quality issues with structured JSONB evidence references.
+### Implemented Persistence Entities (Prompt 09)
+
+The Cloud Control Plane implements the core identity, workspace isolation, dataset catalog, and persistent inspection foundations using SQLAlchemy 2.0 with PostgreSQL-compatible native `Uuid` types and Alembic migration `001_initial_schema`:
+
+1. **`organizations`**
+   - Multi-tenant tenant workspace boundary.
+   - Schema: `id` (UUID PK), `name` (String(255), unique, indexed), `slug` (String(100), unique, indexed), `is_active` (Boolean), `created_at` (DateTime), `updated_at` (DateTime).
+   - Guarantees: All datasets, versions, inspection runs, and findings are strictly bound to an organization.
+
+2. **`users`**
+   - User identity and cryptographic credentials.
+   - Schema: `id` (UUID PK), `email` (String(255), unique, indexed), `hashed_password` (String(255), PBKDF2-HMAC-SHA256 with 16-byte random salt), `full_name` (String(255), nullable), `is_active` (Boolean), `is_superuser` (Boolean), `created_at` (DateTime), `updated_at` (DateTime).
+
+3. **`memberships`**
+   - Multi-tenant RBAC mapping binding users to organizations with role designations.
+   - Schema: `id` (UUID PK), `organization_id` (UUID FK $\rightarrow$ `organizations.id` ON DELETE CASCADE), `user_id` (UUID FK $\rightarrow$ `users.id` ON DELETE CASCADE), `role` (String(32), Enum: `ADMIN`, `STEWARD`, `AUDITOR`, `USER`), `is_active` (Boolean), `created_at` (DateTime).
+   - Constraints: Unique constraint `uq_organization_user_membership` on `(organization_id, user_id)`.
+
+4. **`datasets`**
+   - Dataset metadata container.
+   - Schema: `id` (UUID PK), `organization_id` (UUID FK $\rightarrow$ `organizations.id` ON DELETE CASCADE, indexed), `name` (String(255), indexed), `description` (Text), `current_version_id` (UUID, nullable), `created_by` (UUID, nullable), `created_at` (DateTime).
+
+5. **`dataset_versions`**
+   - Immutable version ledger containing cryptographic proofs and opaque local artifact references.
+   - Schema: `id` (UUID PK), `dataset_id` (UUID FK $\rightarrow$ `datasets.id` ON DELETE CASCADE, indexed), `version_number` (Integer, indexed), `content_hash` (String(64), SHA-256), `file_format` (String(16)), `file_size` (BigInteger), `local_artifact_ref` (`artifact://local/datasets/...`), `dataset_metadata` (JSON profiling summary), `created_at` (DateTime).
+   - Constraints: Unique constraint `uq_dataset_version` on `(dataset_id, version_number)`. Zero raw dataset bytes are stored.
+
+6. **`inspection_runs`**
+   - Execution log for local profiling, Presidio PII scanning, quality validation, and release policy evaluations.
+   - Schema: `id` (UUID PK), `organization_id` (UUID FK $\rightarrow$ `organizations.id` ON DELETE CASCADE, indexed), `dataset_id` (UUID FK $\rightarrow$ `datasets.id` ON DELETE CASCADE, indexed), `dataset_version_id` (UUID FK $\rightarrow$ `dataset_versions.id` ON DELETE CASCADE, indexed), `inspection_type` (Enum: `FULL_SCAN`, `PII_DETECTION`, `QUALITY_VALIDATION`, `POLICY_EVALUATION`), `status` (Enum: `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`), `risk_score` (Float, 0.0-100.0), `risk_band` (String(32)), `policy_version` (String(32)), `is_release_eligible` (Boolean), `summary_report` (JSON), `started_at` (DateTime), `completed_at` (DateTime).
+
+7. **`findings`**
+   - Granular privacy, quality, and policy violations associated with specific inspection runs and dataset versions.
+   - Schema: `id` (UUID PK), `organization_id` (UUID FK $\rightarrow$ `organizations.id` ON DELETE CASCADE, indexed), `inspection_run_id` (UUID FK $\rightarrow$ `inspection_runs.id` ON DELETE CASCADE, indexed), `dataset_version_id` (UUID FK $\rightarrow$ `dataset_versions.id` ON DELETE CASCADE, indexed), `finding_type` (Enum: `PII`, `QUALITY`, `POLICY`, `PROVENANCE`), `category` (String(64)), `column_name` (String(255), nullable), `severity` (Enum: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFORMATIONAL`), `occurrence_count` (Integer), `confidence_score` (Float, 0.0-1.0), `message` (Text), `evidence_ref` (JSON coordinates and counts, zero raw values), `created_at` (DateTime).
+
+### Remaining Entities (Planned Phases 5–6)
 8. `release_requests`: Release proposals linking dataset versions to target destinations.
 9. `review_results`: Structured evaluation output from the independent AI reviewer.
 10. `approval_requests`: Human authorization queue items bound to `artifact_hash`.
 11. `execution_records`: Publication receipts, attempt counters, and idempotency keys.
 12. `audit_events`: Append-only activity log with `previous_event_hash` and `event_hash`.
 13. `scheduled_jobs`: APScheduler job registry for policy monitoring and approval expiration.
+
+### Role-Based Access Control (RBAC) Matrix
+
+| Role | Read Datasets / Reports | Ingest & Profile Datasets | Execute Inspections & Policies | Propose Releases & Mitigations | Override Policies & Manage Org |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **`ADMIN`** | Yes | Yes | Yes | Yes | Yes |
+| **`STEWARD`** | Yes | Yes | Yes | Yes | No |
+| **`AUDITOR`** | Yes | No | No (Read-Only) | No | No |
+| **`USER`** | Yes | Yes | Yes (Local) | No | No |
+
+### Multi-Tenant Isolation & Relational Integrity Guarantees
+- **Strict Tenant Partitioning**: Every dataset, inspection run, and finding has a mandatory or enforced `organization_id`. Database queries through `DatasetService`, `InspectionService`, and `IdentityService` enforce boundary filters.
+- **Fail-Closed Access**: Queries attempting cross-tenant access raise `CrossOrganizationAccessError`, `OrganizationAccessDeniedError`, or `InspectionRunNotFoundError`.
+- **Cascading Integrity**: Deletion of an organization cleanly cascades to all its memberships, datasets, versions, inspection runs, and findings via PostgreSQL `ON DELETE CASCADE` constraints, preserving global user accounts.
+- **Immutability Protection**: `dataset_versions` enforces `uq_dataset_version (dataset_id, version_number)` to prevent mutation or replacement of previously published versions.
 
 ---
 

@@ -1,33 +1,50 @@
 """
 SQLAlchemy 2.0 models for Dataset and immutable DatasetVersion.
 Adheres to ReleaseGate Architecture Baseline v1.0 entity specifications.
+Preserves existing fields, constraints, and relationships while establishing
+multi-tenant organization linkages and inspection persistence connections.
 """
 
-import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, JSON
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+import uuid
+
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.db.models.identity import Organization, User
+    from app.db.models.inspection import Finding, InspectionRun
 
 
 class Dataset(Base):
     """
     Top-level dataset container record.
-    Tracks high-level metadata and references the current active version.
+    Tracks high-level metadata, organizational ownership, and active version reference.
     """
 
     __tablename__ = "datasets"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         primary_key=True,
         default=uuid.uuid4,
     )
     organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
@@ -41,11 +58,12 @@ class Dataset(Base):
         nullable=True,
     )
     current_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         nullable=True,
     )
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -55,11 +73,24 @@ class Dataset(Base):
     )
 
     # Relationships
+    organization: Mapped[Optional["Organization"]] = relationship(
+        "Organization",
+        back_populates="datasets",
+    )
+    creator: Mapped[Optional["User"]] = relationship(
+        "User",
+        back_populates="created_datasets",
+    )
     versions: Mapped[List["DatasetVersion"]] = relationship(
         "DatasetVersion",
         back_populates="dataset",
         cascade="all, delete-orphan",
         order_by="DatasetVersion.version_number",
+    )
+    inspection_runs: Mapped[List["InspectionRun"]] = relationship(
+        "InspectionRun",
+        back_populates="dataset",
+        cascade="all, delete-orphan",
     )
 
 
@@ -71,14 +102,17 @@ class DatasetVersion(Base):
     """
 
     __tablename__ = "dataset_versions"
+    __table_args__ = (
+        UniqueConstraint("dataset_id", "version_number", name="uq_dataset_version"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         primary_key=True,
         default=uuid.uuid4,
     )
     dataset_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("datasets.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -119,8 +153,18 @@ class DatasetVersion(Base):
         nullable=False,
     )
 
-    # Relationship back to parent dataset
+    # Relationships
     dataset: Mapped["Dataset"] = relationship(
         "Dataset",
         back_populates="versions",
+    )
+    inspection_runs: Mapped[List["InspectionRun"]] = relationship(
+        "InspectionRun",
+        back_populates="dataset_version",
+        cascade="all, delete-orphan",
+    )
+    findings: Mapped[List["Finding"]] = relationship(
+        "Finding",
+        back_populates="dataset_version",
+        cascade="all, delete-orphan",
     )

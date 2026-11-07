@@ -1,5 +1,5 @@
 """
-Pydantic schemas package for request/response serialization and validation.
+Pydantic schemas package for ReleaseGate API.
 """
 
 from app.schemas.dataset import (
@@ -9,15 +9,35 @@ from app.schemas.dataset import (
     DatasetResponse,
     DatasetVersionResponse,
 )
-from app.schemas.health import HealthResponse, ReadinessCheckItem, ReadinessResponse
+from app.schemas.identity import (
+    MembershipCreate,
+    MembershipResponse,
+    OrganizationCreate,
+    OrganizationResponse,
+    UserCreate,
+    UserResponse,
+)
+from app.schemas.inspection import (
+    FindingCreate,
+    FindingResponse,
+    InspectionRunCreate,
+    InspectionRunResponse,
+)
 
 __all__ = [
-    "HealthResponse",
-    "ReadinessCheckItem",
-    "ReadinessResponse",
     "DatasetProfileSchema",
     "DatasetMetadataRegistrationRequest",
     "DatasetVersionResponse",
     "DatasetResponse",
     "DatasetIngestResponse",
+    "OrganizationCreate",
+    "OrganizationResponse",
+    "UserCreate",
+    "UserResponse",
+    "MembershipCreate",
+    "MembershipResponse",
+    "FindingCreate",
+    "FindingResponse",
+    "InspectionRunCreate",
+    "InspectionRunResponse",
 ]
