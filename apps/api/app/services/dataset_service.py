@@ -2,13 +2,13 @@
 Dataset Metadata Coordination Service for the Cloud Control Plane.
 Strictly adheres to the ReleaseGate Hybrid Architecture Baseline v1.0:
 - The Cloud Control Plane receives ONLY sanitized metadata, SHA-256 content hashes,
-  opaque artifact references, and profiling summaries.
+  opaque artifact references (artifact://local/datasets/...), and profiling summaries.
 - Raw dataset files, validation, hashing, profiling, and storage execute exclusively
   inside the Local Data Processing Plane (local-worker).
 """
 
 import uuid
-from typing import BinaryIO, List, Optional, Tuple, Union
+from typing import List, Optional
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
@@ -21,7 +21,6 @@ from app.schemas.dataset import (
     DatasetResponse,
     DatasetVersionResponse,
 )
-from local_worker.ingestion_service import LocalIngestionWorker, SanitizedIngestionPayload
 from local_worker.secure_storage import LocalDatasetStorage
 
 logger = get_logger("releasegate.services.dataset")
@@ -46,11 +45,8 @@ class DatasetService:
     """
     Cloud Control Plane Metadata Coordination Service.
     Persists sanitized dataset metadata, content hashes, and profiling summaries in PostgreSQL.
-    Delegates any local raw file processing strictly to LocalIngestionWorker in the Local Data Plane.
+    Contains ZERO raw dataset file ingestion logic.
     """
-
-    def __init__(self, storage: Optional[LocalDatasetStorage] = None):
-        self.local_worker = LocalIngestionWorker(storage=storage)
 
     def register_dataset_metadata(
         self,
@@ -63,7 +59,7 @@ class DatasetService:
         """
         Pure Cloud Control Plane metadata registration handler.
         Accepts ONLY sanitized metadata, SHA-256 hash, opaque artifact ref, and profiling summary
-        emitted by the Local Data Processing Plane. Zero raw dataset bytes enter this method.
+        emitted outbound by the Local Data Processing Plane. Zero raw dataset bytes enter this method.
         """
         dataset: Optional[Dataset] = None
         if registration.dataset_id:
@@ -139,68 +135,7 @@ class DatasetService:
             content_hash=dataset_version.content_hash,
             local_artifact_ref=dataset_version.local_artifact_ref,
             profile=registration.profile,
-            message="Dataset processed in local data plane and metadata registered with cloud control plane.",
-        )
-
-    def ingest_dataset(
-        self,
-        filename: str,
-        content: Union[bytes, BinaryIO],
-        db: Session,
-        dataset_name: Optional[str] = None,
-        description: Optional[str] = None,
-        dataset_id: Optional[uuid.UUID] = None,
-        organization_id: Optional[uuid.UUID] = None,
-        created_by: Optional[uuid.UUID] = None,
-    ) -> DatasetIngestResponse:
-        """
-        Bridge helper that dispatches raw file or stream processing strictly to the
-        Local Data Processing Plane (LocalIngestionWorker) and then registers only the
-        resulting sanitized metadata payload with the Cloud Control Plane database.
-        """
-        existing_dataset: Optional[Dataset] = None
-        next_version = 1
-        if dataset_id:
-            existing_dataset = db.scalar(select(Dataset).where(Dataset.id == dataset_id))
-            if not existing_dataset:
-                raise DatasetNotFoundError(f"Dataset with ID {dataset_id} does not exist.")
-            latest_version_num = db.scalar(
-                select(DatasetVersion.version_number)
-                .where(DatasetVersion.dataset_id == existing_dataset.id)
-                .order_by(desc(DatasetVersion.version_number))
-                .limit(1)
-            ) or 0
-            next_version = latest_version_num + 1
-
-        # 1. Execute validation, bounded storage, hashing, and profiling strictly inside LocalIngestionWorker
-        sanitized_payload: SanitizedIngestionPayload = self.local_worker.process_local_file_or_stream(
-            filename=filename,
-            source=content,
-            dataset_id=existing_dataset.id if existing_dataset else None,
-            version_number=next_version,
-            dataset_name=existing_dataset.name if existing_dataset else dataset_name,
-            description=existing_dataset.description if existing_dataset else description,
-        )
-
-        # 2. Construct sanitized metadata registration request (zero raw bytes)
-        registration = DatasetMetadataRegistrationRequest(
-            dataset_id=sanitized_payload.dataset_id,
-            dataset_name=sanitized_payload.dataset_name,
-            description=sanitized_payload.description,
-            content_hash=sanitized_payload.content_hash,
-            file_format=sanitized_payload.file_format,
-            file_size=sanitized_payload.file_size,
-            local_artifact_ref=sanitized_payload.local_artifact_ref,
-            profile=DatasetProfileSchema.model_validate(sanitized_payload.profile),
-        )
-
-        # 3. Register sanitized metadata in Cloud Control Plane
-        return self.register_dataset_metadata(
-            registration=registration,
-            db=db,
-            require_existing_dataset=bool(dataset_id),
-            organization_id=organization_id,
-            created_by=created_by,
+            message="Dataset metadata registered successfully in Cloud Control Plane.",
         )
 
     def get_dataset(self, dataset_id: uuid.UUID, db: Session) -> DatasetResponse:
