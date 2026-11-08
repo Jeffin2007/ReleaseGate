@@ -1,4 +1,0 @@
-{
-  "tests/test_mcp_server.py::TestMCPToolExecution::test_tool_3_validate_data_quality": true,
-  "tests/test_mcp_server.py::TestMCPToolExecution::test_tool_6_propose_transformation": true
-}
