@@ -1,0 +1,5 @@
+[
+  {"employee_id": "E-01", "department": "Security", "clearance": "Top Secret"},
+  {"employee_id": "E-02", "department": "Legal", "clearance": "Confidential"},
+  {"employee_id": "E-03", "department": null, "clearance": "Public"}
+]

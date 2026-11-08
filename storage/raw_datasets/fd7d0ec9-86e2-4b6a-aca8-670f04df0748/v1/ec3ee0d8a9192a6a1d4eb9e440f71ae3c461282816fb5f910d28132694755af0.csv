@@ -1,0 +1,6 @@
+id,full_name,email_address,phone_number,income,registration_date
+1,Alice Smith,alice@example.com,555-010-1234,75000,2023-01-15
+2,Bob Jones,bob@workplace.org,555-010-5678,82000,2023-02-20
+3,Charlie Brown,charlie@test.net,555-010-9012,,2023-03-25
+4,Diana Prince,diana@themyscira.gov,555-010-3456,120000,invalid-date
+5,Evan Wright,evan@corp.com,555-010-7890,65000,2023-05-10

@@ -1,0 +1,6 @@
+user_id,email,age,income,country
+1,alice@example.com,28,75000,US
+2,bob@example.com,,82000,CA
+3,charlie@example.com,35,,US
+4,david@example.com,42,105000,UK
+1,alice@example.com,28,75000,US
