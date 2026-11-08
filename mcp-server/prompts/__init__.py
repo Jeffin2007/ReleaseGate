@@ -1,0 +1,1 @@
+"""Frozen MCP prompt definitions."""

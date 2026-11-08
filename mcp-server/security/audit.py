@@ -1,96 +1,77 @@
 """
-Audit logging for ReleaseGate Model Context Protocol (MCP) tool invocations.
-Adheres to ReleaseGate Frozen Architecture Baseline v1.0.
-Ensures zero raw dataset values, credentials, or local filesystem paths appear in logs.
+Append-only, sanitized audit ledger for MCP tool invocations.
+
+The ledger is local and in-memory in this process; production deployments ship
+the records to the cloud control plane's append-only audit store through the
+authenticated outbound job channel. This module never touches PostgreSQL or the
+filesystem, and every argument and error string is scrubbed before storage.
 """
 
+from __future__ import annotations
+
 from datetime import datetime, timezone
-import json
-import logging
-import os
-import re
+import threading
 from typing import Any, Dict, List, Optional
 import uuid
 
-logger = logging.getLogger("releasegate.mcp.audit")
+from mcp_server.security.permissions import MCPPrincipal
+from mcp_server.security.redaction import sanitize_for_audit
 
-# Prohibited patterns in audit records
-PATH_PATTERN = re.compile(r"(/[a-zA-Z0-9_\-\.]+)+")
+_MAX_RECORDS = 5_000
 
 
 class MCPAuditLogger:
-    """
-    Structured audit logger for MCP tool interactions.
-    Guarantees sanitized parameter logging and immutable record formatting.
-    """
+    """Bounded, thread-safe, sanitized audit ledger."""
 
-    def __init__(self) -> None:
-        self.in_memory_audit_ledger: List[Dict[str, Any]] = []
-
-    def sanitize_data(self, data: Any) -> Any:
-        """
-        Recursively remove any sensitive fields or local absolute paths.
-        """
-        if isinstance(data, dict):
-            sanitized = {}
-            for k, v in data.items():
-                lower_k = str(k).lower()
-                if "token" in lower_k or "secret" in lower_k or "key" in lower_k:
-                    sanitized[k] = "[REDACTED_SECRET]"
-                elif "raw" in lower_k or "content" in lower_k or "text" in lower_k:
-                    if isinstance(v, (str, bytes)):
-                        sanitized[k] = "[REDACTED_RAW_CONTENT]"
-                    else:
-                        sanitized[k] = self.sanitize_data(v)
-                else:
-                    sanitized[k] = self.sanitize_data(v)
-            return sanitized
-        elif isinstance(data, list):
-            return [self.sanitize_data(item) for item in data]
-        elif isinstance(data, str):
-            # Check if it looks like an absolute filesystem path outside of allowed URIs
-            if data.startswith("/") and not data.startswith("/api/"):
-                return "[REDACTED_LOCAL_PATH]"
-            return data
-        else:
-            return data
+    def __init__(self, max_records: int = _MAX_RECORDS) -> None:
+        self._max_records = max_records
+        self._records: List[Dict[str, Any]] = []
+        self._lock = threading.Lock()
 
     def record_tool_call(
         self,
+        *,
         tool_name: str,
-        caller_role: str,
+        principal: MCPPrincipal,
         arguments: Dict[str, Any],
         success: bool,
         error_message: Optional[str] = None,
         duration_ms: float = 0.0,
     ) -> Dict[str, Any]:
-        """Record an auditable MCP tool invocation event."""
-        event_id = str(uuid.uuid4())
-        timestamp = datetime.now(timezone.utc).isoformat()
-
-        record = {
-            "event_id": event_id,
-            "timestamp": timestamp,
+        """Record a sanitized tool invocation."""
+        record: Dict[str, Any] = {
+            "event_id": str(uuid.uuid4()),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_type": "mcp_tool_invocation",
             "tool_name": tool_name,
-            "caller_role": caller_role,
-            "arguments": self.sanitize_data(arguments),
+            "principal_id": principal.principal_id,
+            "organization_id": principal.organization_id,
+            "caller_role": principal.role.value,
+            "channel": principal.channel.value,
+            "arguments": sanitize_for_audit(arguments),
             "success": success,
             "duration_ms": round(duration_ms, 2),
         }
         if error_message:
-            record["error"] = error_message
+            record["error"] = sanitize_for_audit(error_message)
 
-        self.in_memory_audit_ledger.append(record)
-        logger.info(
-            f"MCP Tool '{tool_name}' invoked by role '{caller_role}' - "
-            f"success={success} duration={record['duration_ms']}ms"
-        )
+        with self._lock:
+            self._records.append(record)
+            if len(self._records) > self._max_records:
+                del self._records[: len(self._records) - self._max_records]
         return record
 
     def get_recent_records(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Return recent sanitized audit records."""
-        return self.in_memory_audit_ledger[-limit:]
+        """Return the most recent audit records."""
+        with self._lock:
+            return list(self._records[-limit:])
+
+    def clear(self) -> None:
+        """Clear the local ledger (used by tests and controlled rotation)."""
+        with self._lock:
+            self._records.clear()
 
 
 audit_logger = MCPAuditLogger()
+
+__all__ = ["MCPAuditLogger", "audit_logger"]

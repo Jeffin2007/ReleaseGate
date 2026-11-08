@@ -151,7 +151,9 @@ Execution halts immediately with an explicit status code upon reaching any bound
 
 ## Model Context Protocol (MCP) Tool Registry (All 12 Tools)
 
-The local MCP server exposes exactly 12 schema-validated tools:
+The local MCP server exposes exactly 12 schema-validated tools. Setup, identity,
+tool/resource/prompt contracts, the human approval workflow, and security tests
+are documented in [docs/mcp-server.md](docs/mcp-server.md).
 
 | # | MCP Tool Name | Function & Purpose |
 | :-: | :--- | :--- |
